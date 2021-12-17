@@ -125,10 +125,9 @@ class SocketModifierOps(AbstractOp):
             jsonCall.setData("OK")
             return
         else:
-            # FIXME - Don't get the modifier, we call self.setModifier instead
-            modifier = self.api.internals.getHuman().getModifier(modifierName)
-            power = float(jsonCall.getParam("power"))
-            if not modifier:
+            try:
+                power = float(jsonCall.getParam("power"))
+            except:
                 jsonCall.setError("No such modifier")
                 return
 
