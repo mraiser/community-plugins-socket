@@ -5,6 +5,7 @@ import mediapipe as mp
 import numpy as np
 import io
 import base64
+import imutils as imutils
 
 from .abstractop import AbstractOp
 from core import G
@@ -25,10 +26,50 @@ class SocketModifierOps(AbstractOp):
         self.functions["resetCamera"] = self.resetCamera
         self.functions["maximizeWindow"] = self.maximizeWindow
         self.functions["landmarks"] = self.landmarks
-        self.functions["approach_target"] = self.approach_target
+        self.functions["approachTarget"] = self.approachTarget
+        self.functions["optimizeTargetRotation"] = self.optimizeTargetRotation
         self.target = None
+        self.target_image = None
+        self.target_rotation = 0.0
 
-    def approach_target(self, conn, jsonCall):
+    def optimizeTargetRotation(self, conn, jsonCall):
+        keys = self.target.keys()
+        data = self.target
+        nudata = self.analyze()
+        delta = self.calcdelta(data, nudata, keys)
+        x = data['X_4']
+        y = data['Y_4']
+        bestrot = self.target_rotation
+        img = self.target_image
+        newimg = self.rotateImg(img, self.target_rotation, x, y)
+        for i in range(-100, 100, 1):
+            tmpimg = self.rotateImg(img, i / 10, x, y)
+            tmp = self.getLandmarks(tmpimg)
+            if len(tmp.keys()) > 0:
+                nudelta = self.calcdelta(tmp, nudata, keys)
+                if (nudelta < delta):
+                    data = tmp
+                    delta = nudelta
+                    bestrot = i / 10
+                    newimg = tmpimg
+
+        print('BEST ROTATION IS: ' + str(bestrot))
+        self.target = data
+        self.target_rotation = bestrot
+
+        img = newimg
+        shape = img.shape
+        img = img.reshape(-1)
+        img = base64.b64encode(img)
+        img = {
+            "loss": delta,
+            "rotation": bestrot,
+            "shape": shape,
+            "data": img
+        }
+        jsonCall.setData(img)
+
+    def approachTarget(self, conn, jsonCall):
         keys = self.target.keys()
         step = jsonCall.getParam("step")
         modifiers = jsonCall.getParam("modifiers")
@@ -85,10 +126,41 @@ class SocketModifierOps(AbstractOp):
         img = base64.b64decode(img)
         img = np.frombuffer(img, dtype=np.uint8)
         img = cv2.imdecode(img, -1)
-        img = self.getLandmarks(img)
 
-        self.target = img
-        jsonCall.setData("OK")
+        model = self.grabImage()
+        if img.shape != model.shape:
+            th, tw, tc = img.shape
+            mh, mw, mc = model.shape
+
+            if tc != mc:
+                raise Exception("Image formats incompatible")
+
+            maxh = max(th, mh)
+            maxw = max(tw, mw)
+            blank_image = np.zeros((maxh, maxw, 3), np.uint8)
+
+            toffh = int((maxh - th)/2)
+            toffw = int((maxw - tw)/2)
+            blank_image[toffh:toffh + th, toffw:toffw + tw] = img
+
+            moffh = int((maxh - mh)/2)
+            moffw = int((maxw - mw)/2)
+            img = blank_image[moffh:moffh + mh, moffw:moffw + mw]
+
+        self.target = None
+        self.target_image = img
+        self.target_rotation = 0.0
+
+        self.target = self.getLandmarks(img)
+
+        shape = img.shape
+        img = img.reshape(-1)
+        img = base64.b64encode(img)
+        img = {
+            "shape": shape,
+            "data": img
+        }
+        jsonCall.setData(img)
 
     def getModifierValue(self, conn, jsonCall):
         modifierName = jsonCall.getParam("modifier")
@@ -240,11 +312,15 @@ class SocketModifierOps(AbstractOp):
             delta += (d * d)
         return delta
 
-    def analyze(self):
+    def grabImage(self):
         G.app.redraw()
         img = mh.grabScreen(0, 0, G.windowWidth, G.windowHeight)
         img = img.data
         imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        return imgRGB
+
+    def analyze(self):
+        imgRGB = self.grabImage()
         return self.getLandmarks(imgRGB)
 
     def iterate(self, target, values, keys, step):
@@ -287,3 +363,11 @@ class SocketModifierOps(AbstractOp):
         }
         return d
 
+    def rotateImg(self, img, rotation, x, y):
+        ih, iw, ic = img.shape
+        rx2 = (iw / 2) - (iw * x / 1000)
+        ry2 = (ih / 2) - (ih * y / 1000)
+        img = imutils.translate(img, rx2, ry2)
+        img = imutils.rotate(img, angle=rotation)
+        img = imutils.translate(img, 0 - rx2, 0 - ry2)
+        return img
