@@ -208,9 +208,11 @@ class JsonCall():
 
     def send(self, host = "127.0.0.1", port = 12345):
         client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client.connect(('127.0.0.1', 12345))
-        client.send(bytes(self.serialize(), 'utf-8'))
-     
+        client.connect((host, port))
+        data = self.serialize()
+        client.send(len(data).to_bytes(4, 'big'))
+        client.send(bytes(data, 'utf-8'))
+
         data = ""
     
         while True:

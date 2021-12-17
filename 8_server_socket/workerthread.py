@@ -89,7 +89,10 @@ class WorkerThread(QThread):
     
                 if conn and not self.exiting:
                     self.addMessage("Connected with " + str(addr[0]) + ":" + str(addr[1]))
-                    data = conn.recv(8192)
+                    l = int.from_bytes(conn.recv(4), "big")
+                    data = b''
+                    while len(data) < l:
+                        data += conn.recv(8192)
                     self.addMessage("Client says: '" + str(data, encoding='utf-8') + "'")
                     data = gui3d.app.mhapi.internals.JsonCall(data)
     
